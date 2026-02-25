@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='jupyterhub-duoauthenticator',
-    version='1.0',
+    version='2.0',
     description='Duo Universal Two-Factor Authentication for JupyterHub',
     url='https://github.com/unlhcc/duoauthenticator',
     author='Adam Caprez',

@@ -1,3 +1,3 @@
-from duoauthenticator.duoauthenticator import DuoAuthenticator
+from duoauthenticator.duoauthenticator import DuoAuthenticator, DuoHandler, DuoCallbackHandler
 
-__all__ = [DuoAuthenticator]
+__all__ = ['DuoAuthenticator', 'DuoHandler', 'DuoCallbackHandler']

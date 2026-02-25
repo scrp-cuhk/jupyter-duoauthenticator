@@ -3,7 +3,7 @@ from setuptools import setup
 setup(
     name='jupyterhub-duoauthenticator',
     version='1.0',
-    description='Duo Two-Factor Authentication for JupyterHub',
+    description='Duo Universal Two-Factor Authentication for JupyterHub',
     url='https://github.com/unlhcc/duoauthenticator',
     author='Adam Caprez',
     author_email='acaprez2@unl.edu',
@@ -19,7 +19,7 @@ setup(
                   'share/jupyterhub/static/components/duo/js/Duo-Web-v2.min.js']),
     ],
     install_requires=[
-        'duo_web',
+        'duo_universal',
         'jupyterhub',
     ],
     classifiers=[

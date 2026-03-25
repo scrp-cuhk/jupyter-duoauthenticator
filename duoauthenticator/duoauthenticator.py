@@ -194,15 +194,12 @@ class DuoAuthAPIHandler(LoginHandler):
         return template.render(**kwargs)
 
     async def get(self):
-        """Render device selection page for Auth API mode."""
+        """Render login page or device selection page for Auth API mode."""
         state = self.get_argument('state', default=None)
 
         if not state:
-            self.log.error("Missing state parameter for device selection")
-            html = await self._render(
-                login_error='Authentication error: missing state',
-                username='',
-            )
+            # No state means this is a regular login page request, render login form
+            html = await self._render(username='')
             self.finish(html)
             return
 

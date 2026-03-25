@@ -1,109 +1,174 @@
-# Duo Authenticator Plugin for Jupyter #
+# Duo Authenticator for JupyterHub
 
-Simple Duo Authenticator Plugin for JupyterHub
+A JupyterHub authenticator that adds Duo two-factor authentication as a secondary
+authentication layer on top of primary authentication (PAM by default).
 
-## Requirements and Limitations ##
+## Features
 
-This plugin adds Duo **secondary authentication**.  The primary authentication
-is done using another Authenticator.  By default, this is the standard PAM
-Authenticator.  Any other custom Authenticator that functions when used as
-the sole authenticator via `c.JupyterHub.authenticator_class` should work, but
-only the PAMAuthenticator has been tested.
+- **Two authentication modes:**
+  - **Universal mode** (default): Uses Duo Universal Prompt with OAuth-based redirect flow
+  - **Auth API mode**: Uses Duo Auth API for legacy credentials (ikey/skey) with device selection UI
 
-It is recommended to setup and test whichever primary authenticator will be used
-first to ensure it's functioning before installing this plugin.
+- **User mapping**: Map JupyterHub usernames to different Duo usernames via CSV file
 
-## Installation ##
+- **Per-user bypass**: Allow specific users to skip Duo authentication
 
-Install from Github using pip:
+- **Flexible configuration**: Configure via JupyterHub config or environment variables
 
+## Requirements
+
+This plugin adds Duo **secondary authentication**. Primary authentication is done
+using another Authenticator (PAMAuthenticator by default).
+
+Test that your primary authenticator works before installing this plugin.
+
+## Installation
+
+```bash
+pip install git+https://github.com/scrp-cuhk/jupyter-duoauthenticator.git
 ```
-pip install git+https://github.com/unlhcc/jupyter-duoauthenticator.git
+
+Or install from a local checkout:
+
+```bash
+git clone https://github.com/scrp-cuhk/jupyter-duoauthenticator.git
+cd jupyter-duoauthenticator
+pip install -e .
 ```
 
-### Create a Duo application ###
+## Configuration
 
-Add a new Application of type Web SDK in the Duo Control Panel.  Make a note of
-the Integration Key, Secret Key, and API hostname.
-
-### Generate the akey ###
-
-The akey is a generated string used to sign requests and is kept secret from Duo.
-To generate the akey using Python, run
+Enable the authenticator in your `jupyterhub_config.py`:
 
 ```python
-import os, hashlib
-print hashlib.sha1(os.urandom(32)).hexdigest()
-```
-
-More details can be found in the [Duo documentation](https://duo.com/docs/duoweb).
-
-## Usage ##
-
-Enable the authenticator by setting the following in your `jupyter_config.py`:
-
-```python
-import duoauthenticator
 c.JupyterHub.authenticator_class = 'duoauthenticator.DuoAuthenticator'
 ```
 
-### Required configuration ###
+### Duo Universal Mode (Default)
 
-The following configuation options must be set:
-
-#### `c.DuoAuthenticator.ikey` ####
-
-The Integration key from the Duo Application Details:
+Create a "Universal Prompt" application in the Duo Admin Panel and configure:
 
 ```python
-c.DuoAuthenticator.ikey = '<my ikey>'
+c.DuoAuthenticator.duo_mode = 'universal'  # this is the default
+c.DuoAuthenticator.client_id = 'DIXXXXXXXX'
+c.DuoAuthenticator.client_secret = 'xxxxxxxxxx'
+c.DuoAuthenticator.apihost = 'api-xxxxx.duosecurity.com'
+c.DuoAuthenticator.redirect_uri = 'https://your-jupyterhub.example.com/hub/duo-callback'
 ```
 
-#### `c.DuoAuthenticator.skey` ####
+### Duo Auth API Mode (Legacy Credentials)
 
-The Secret key from the Duo Application Details:
+For legacy Duo credentials (ikey/skey from a "Web SDK" or "Auth API" integration):
 
 ```python
-c.DuoAuthenticator.skey = '<my skey>'
+c.DuoAuthenticator.duo_mode = 'auth_api'
+c.DuoAuthenticator.auth_api_ikey = 'DIXXXXXXXX'
+c.DuoAuthenticator.auth_api_skey = 'xxxxxxxxxx'
+c.DuoAuthenticator.apihost = 'api-xxxxx.duosecurity.com'
 ```
 
-#### `c.DuoAuthenticator.akey` ####
+Auth API mode provides a device selection UI showing enrolled devices with their
+capabilities (push, phone, SMS, passcode).
 
-The generated akey:
+## User Mapping
+
+Map JupyterHub usernames to different Duo usernames via a CSV file.
+
+### Configuration
 
 ```python
-c.DuoAuthenticator.akey = '<my akey>'
+c.DuoAuthenticator.duo_user_list_path = '/path/to/duo-user-list.csv'
 ```
 
-#### `c.DuoAuthenticator.apihost` ####
+Or via environment variable:
 
-The API hostname from the Duo Application Details:
+```bash
+export DUO_USER_LIST=/path/to/duo-user-list.csv
+```
+
+### CSV Format
+
+```csv
+username,duo_username,bypass
+juser,juser.duo,0
+admin,admin.duo,1
+testuser,465977,No
+```
+
+| Field | Description |
+|-------|-------------|
+| `username` | JupyterHub login username |
+| `duo_username` | Duo username to authenticate against |
+| `bypass` | Set to `1` to skip Duo for this user, `0` or `No` otherwise |
+
+### Default Behavior for Unknown Users
+
+Control what happens for users not in the mapping file:
 
 ```python
-c.DuoAuthenticator.apihost = 'api-XXXXX.duosecurity.com'
+# Require Duo for unknown users (default)
+c.DuoAuthenticator.duo_default_bypass = False
+
+# Allow unknown users to bypass Duo
+c.DuoAuthenticator.duo_default_bypass = True
 ```
 
-### Optional configuration ###
+Or via environment variable:
 
-#### `c.DuoAuthenticator.primary_auth_class` ####
+```bash
+export DUO_DEFAULT_BYPASS=true
+```
 
-The class to use for the primary authentication.  Default is the built-in
-PAMAuthenticator, i.e.
+## Configuration Reference
+
+### Required Options
+
+| Option | Description |
+|--------|-------------|
+| `client_id` | Duo Client ID (Universal mode) |
+| `client_secret` | Duo Client Secret (Universal mode) |
+| `redirect_uri` | OAuth callback URL (Universal mode) |
+| `auth_api_ikey` | Duo Integration Key (Auth API mode) |
+| `auth_api_skey` | Duo Secret Key (Auth API mode) |
+| `apihost` | Duo API hostname (e.g., `api-xxxxx.duosecurity.com`) |
+
+### Optional Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `duo_mode` | `'universal'` | Authentication mode: `'universal'` or `'auth_api'` |
+| `duo_user_list_path` | `''` | Path to user mapping CSV file |
+| `duo_default_bypass` | `False` | Bypass Duo for users not in mapping file |
+| `auth_api_timeout` | `'300'` | Session timeout in seconds (Auth API mode) |
+| `primary_auth_class` | `PAMAuthenticator` | Primary authentication class |
+
+## Environment Variables
+
+| Variable | Equivalent Config |
+|----------|-------------------|
+| `DUO_USER_LIST` | `duo_user_list_path` |
+| `DUO_DEFAULT_BYPASS` | `duo_default_bypass` (set to `1`, `true`, or `yes`) |
+
+## Example Configuration
 
 ```python
-c.DuoAuthenticator.primary_auth_class = 'jupyterhub.auth.PAMAuthenticator'
+# jupyterhub_config.py
+
+c.JupyterHub.authenticator_class = 'duoauthenticator.DuoAuthenticator'
+
+# Auth API mode with legacy credentials
+c.DuoAuthenticator.duo_mode = 'auth_api'
+c.DuoAuthenticator.auth_api_ikey = 'DIXXXXXXXX'
+c.DuoAuthenticator.auth_api_skey = 'xxxxxxxxxx'
+c.DuoAuthenticator.apihost = 'api-xxxxx.duosecurity.com'
+
+# User mapping
+c.DuoAuthenticator.duo_user_list_path = '/etc/jupyterhub/duo-users.csv'
+
+# Unknown users require Duo
+c.DuoAuthenticator.duo_default_bypass = False
 ```
 
-#### `c.DuoAuthenticator.duo_custom_html` ####
+## License
 
-Custom html as a Unicode string to use for the Duo auth page.  Default is an
-empty string, which will use the included `duo.html` template:
-
-```python
-c.DuoAuthenticator.duo_custom_html=''
-```
-
-Must contain at minimum an iframe with `id='duo_iframe'`, as well as `data-host`
-and `data-sig-request` template attributes to be populated.  See
-the [Duo documentation](https://duo.com/docs/duoweb#appendices) for more details
-on the iframe configuration.
+GPLv3

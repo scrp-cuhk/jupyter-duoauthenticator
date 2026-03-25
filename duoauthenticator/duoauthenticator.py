@@ -42,7 +42,7 @@ class DuoHandler(LoginHandler):
                 else:
                     html = await self._render(
                         login_error='Authentication failed',
-                        username=None,
+                        username='',
                     )
                     self.finish(html)
             else:
@@ -76,14 +76,14 @@ class DuoHandler(LoginHandler):
                     self.log.error("Duo setup failed: %s", str(e))
                     html = await self._render(
                         login_error='Duo authentication unavailable',
-                        username=None,
+                        username='',
                     )
                     self.finish(html)
         else:
             # self._render is defined by LoginHandler
             html = await self._render(
                 login_error='Invalid username or password',
-                username=None,
+                username='',
             )
             self.finish(html)
 
@@ -99,7 +99,7 @@ class DuoCallbackHandler(BaseHandler):
             self.log.error("Duo callback missing required parameters")
             html = await self._render(
                 login_error='Authentication failed: missing Duo response',
-                username=None,
+                username='',
             )
             self.finish(html)
             return
@@ -109,7 +109,7 @@ class DuoCallbackHandler(BaseHandler):
             self.log.error("Invalid OAuth state received from Duo")
             html = await self._render(
                 login_error='Authentication failed: invalid state',
-                username=None,
+                username='',
             )
             self.finish(html)
             return
@@ -156,7 +156,7 @@ class DuoCallbackHandler(BaseHandler):
             self.log.error("Duo authentication failed: %s", str(e))
             html = await self._render(
                 login_error='Duo authentication failed',
-                username=None,
+                username='',
             )
             self.finish(html)
 
@@ -201,7 +201,7 @@ class DuoAuthAPIHandler(LoginHandler):
             self.log.error("Missing state parameter for device selection")
             html = await self._render(
                 login_error='Authentication error: missing state',
-                username=None,
+                username='',
             )
             self.finish(html)
             return
@@ -212,7 +212,7 @@ class DuoAuthAPIHandler(LoginHandler):
             self.log.error("Invalid or expired session state")
             html = await self._render(
                 login_error='Authentication session expired. Please try again.',
-                username=None,
+                username='',
             )
             self.finish(html)
             return
@@ -224,7 +224,7 @@ class DuoAuthAPIHandler(LoginHandler):
             self.log.error("Auth API session timed out")
             html = await self._render(
                 login_error='Authentication session timed out. Please try again.',
-                username=None,
+                username='',
             )
             self.finish(html)
             return
@@ -251,7 +251,7 @@ class DuoAuthAPIHandler(LoginHandler):
             self.log.error("Unknown action: %s", action)
             html = await self._render(
                 login_error='Invalid request',
-                username=None,
+                username='',
             )
             self.finish(html)
 
@@ -268,7 +268,7 @@ class DuoAuthAPIHandler(LoginHandler):
         if not duo_username:
             html = await self._render(
                 login_error='Invalid username or password',
-                username=None,
+                username='',
             )
             self.finish(html)
             return
@@ -284,7 +284,7 @@ class DuoAuthAPIHandler(LoginHandler):
             else:
                 html = await self._render(
                     login_error='Authentication failed',
-                    username=None,
+                    username='',
                 )
                 self.finish(html)
             return
@@ -303,7 +303,7 @@ class DuoAuthAPIHandler(LoginHandler):
                 self.log.error("Duo Auth API credentials not configured")
                 html = await self._render(
                     login_error='Duo Auth API credentials not configured. Set auth_api_ikey and auth_api_skey.',
-                    username=None,
+                    username='',
                 )
                 self.finish(html)
                 return
@@ -358,7 +358,7 @@ class DuoAuthAPIHandler(LoginHandler):
                     duo_username, preauth_result.get('status_msg', 'No reason given'))
                 html = await self._render(
                     login_error=preauth_result.get('status_msg', 'Access denied by Duo'),
-                    username=None,
+                    username='',
                 )
                 self.finish(html)
 
@@ -367,7 +367,7 @@ class DuoAuthAPIHandler(LoginHandler):
                 self.log.info("User '%s' needs to enroll in Duo", duo_username)
                 html = await self._render(
                     login_error='You must enroll in Duo two-factor authentication first.',
-                    username=None,
+                    username='',
                 )
                 self.finish(html)
 
@@ -376,7 +376,7 @@ class DuoAuthAPIHandler(LoginHandler):
                 self.log.error("Unknown Duo preauth result: %s", preauth_result)
                 html = await self._render(
                     login_error='Duo authentication error. Please try again.',
-                    username=None,
+                    username='',
                 )
                 self.finish(html)
 
@@ -384,7 +384,7 @@ class DuoAuthAPIHandler(LoginHandler):
             self.log.error("Duo preauth failed: %s", str(e), exc_info=True)
             html = await self._render(
                 login_error=f'Duo authentication error: {str(e)}',
-                username=None,
+                username='',
             )
             self.finish(html)
 
@@ -418,7 +418,7 @@ class DuoAuthAPIHandler(LoginHandler):
             self.log.error("Missing state parameter")
             html = await self._render(
                 login_error='Authentication error: missing state',
-                username=None,
+                username='',
             )
             self.finish(html)
             return
@@ -429,7 +429,7 @@ class DuoAuthAPIHandler(LoginHandler):
             self.log.error("Invalid or expired session state")
             html = await self._render(
                 login_error='Authentication session expired. Please try again.',
-                username=None,
+                username='',
             )
             self.finish(html)
             return
@@ -493,7 +493,7 @@ class DuoAuthAPIHandler(LoginHandler):
                     self.log.error("Duo auth waiting but no txid returned")
                     html = await self._render(
                         login_error='Duo authentication error. Please try again.',
-                        username=None,
+                        username='',
                     )
                     self.finish(html)
 
@@ -538,7 +538,7 @@ class DuoAuthAPIHandler(LoginHandler):
             else:
                 html = await self._render(
                     login_error='Authentication error. Please try again.',
-                    username=None,
+                    username='',
                 )
             self.finish(html)
 

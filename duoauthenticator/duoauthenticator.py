@@ -717,6 +717,27 @@ class DuoAuthenticator(Authenticator):
         """
     ).tag(config=True)
 
+    duo_default_bypass = Bool(
+        False,
+        help="""
+        Default bypass behavior for users not in the DUO_USER_LIST.
+
+        If True, users not found in the user mapping file will bypass Duo
+        authentication and only need primary auth.
+        If False (default), users not in the list will require Duo authentication.
+
+        Can also be set via the DUO_DEFAULT_BYPASS environment variable.
+        Set to '1', 'true', or 'yes' to enable bypass for unknown users.
+
+        """
+    ).tag(config=True)
+
+    @default('duo_default_bypass')
+    def _default_duo_default_bypass(self):
+        """Get default bypass from environment variable."""
+        env_val = os.environ.get('DUO_DEFAULT_BYPASS', '').lower()
+        return env_val in ('1', 'true', 'yes')
+
     auth_api_ikey = Unicode(
         help="""
         Duo Integration Key for Auth API mode.
@@ -798,11 +819,11 @@ class DuoAuthenticator(Authenticator):
         """Get Duo username and bypass flag for a given username.
 
         Returns a dict with 'duo_username' and 'bypass' keys.
-        If username not found, returns the original username and bypass=False.
+        If username not found, returns the original username and the default bypass value.
         """
         if username in self._user_mapping:
             return self._user_mapping[username]
-        return {'duo_username': username, 'bypass': False}
+        return {'duo_username': username, 'bypass': self.duo_default_bypass}
 
     duo_custom_html = Unicode(
         help="""

@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='jupyterhub-duoauthenticator',
-    version='2.0',
+    version='2.7',
     description='Duo Universal Two-Factor Authentication for JupyterHub',
     url='https://github.com/unlhcc/duoauthenticator',
     author='Adam Caprez',
@@ -11,7 +11,9 @@ setup(
     packages=['duoauthenticator'],
     include_package_data=True,
     data_files = [('share/jupyterhub/templates',
-                 ['share/jupyterhub/templates/duo.html']),
+                 ['share/jupyterhub/templates/duo.html',
+                  'share/jupyterhub/templates/duo_auth_api.html',
+                  'share/jupyterhub/templates/duo_waiting.html']),
                  ('share/jupyterhub/static/components/duo/css',
                  ['share/jupyterhub/static/components/duo/css/Duo-Frame.css']),
                  ('share/jupyterhub/static/components/duo/js',
@@ -20,6 +22,7 @@ setup(
     ],
     install_requires=[
         'duo_universal',
+        'duo-client',
         'jupyterhub',
     ],
     classifiers=[

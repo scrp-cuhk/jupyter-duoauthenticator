@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Duo Authentication - Waiting for Approval</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 450px;
+            margin: 80px auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 40px;
+            text-align: center;
+        }
+        h1 {
+            color: #333;
+            margin-top: 0;
+            font-size: 24px;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #007bff;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            animation: spin 1s linear infinite;
+            margin: 30px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .status-message {
+            color: #666;
+            font-size: 16px;
+            margin: 20px 0;
+        }
+        .duo-instructions {
+            background: #e7f3ff;
+            border: 1px solid #b3d7ff;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 20px 0;
+            text-align: left;
+        }
+        .duo-instructions h3 {
+            margin: 0 0 10px 0;
+            color: #0056b3;
+            font-size: 14px;
+        }
+        .duo-instructions ul {
+            margin: 0;
+            padding-left: 20px;
+            color: #333;
+            font-size: 14px;
+        }
+        .duo-instructions li {
+            margin-bottom: 5px;
+        }
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+            border: 1px solid #f5c6cb;
+            display: none;
+        }
+        .cancel-link {
+            margin-top: 30px;
+        }
+        .cancel-link a {
+            color: #6c757d;
+            text-decoration: none;
+            font-size: 14px;
+        }
+        .cancel-link a:hover {
+            text-decoration: underline;
+            color: #495057;
+        }
+        .success-icon {
+            display: none;
+            color: #28a745;
+            font-size: 60px;
+            margin: 30px auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Duo Authentication</h1>
+
+        <div id="spinner" class="spinner"></div>
+        <div id="success-icon" class="success-icon">&#10003;</div>
+
+        <p id="status-text" class="status-message">{{ status_msg }}</p>
+
+        <div id="error-box" class="error-message"></div>
+
+        <div class="duo-instructions">
+            <h3>Waiting for approval...</h3>
+            <ul>
+                <li>Check your Duo Mobile app for a push notification</li>
+                <li>Tap "Approve" to complete authentication</li>
+                <li>This page will update automatically</li>
+            </ul>
+        </div>
+
+        <div class="cancel-link">
+            <a href="{{ base_url }}hub/login">Cancel and return to login</a>
+        </div>
+    </div>
+
+    <script>
+        var pollInterval = 3000; // 3 seconds
+        var state = "{{ state }}";
+        var baseUrl = "{{ base_url }}";
+        var polling = true;
+
+        function checkStatus() {
+            if (!polling) return;
+
+            fetch(baseUrl + 'hub/duo-status?state=' + encodeURIComponent(state))
+                .then(function(response) {
+                    return response.json();
+                })
+                .then(function(data) {
+                    if (data.complete) {
+                        polling = false;
+                        if (data.success) {
+                            // Show success
+                            document.getElementById('spinner').style.display = 'none';
+                            document.getElementById('success-icon').style.display = 'block';
+                            document.getElementById('status-text').textContent = 'Authentication successful! Redirecting...';
+                            document.querySelector('.duo-instructions').style.display = 'none';
+
+                            // Redirect after short delay
+                            setTimeout(function() {
+                                window.location.href = data.redirect || (baseUrl + 'hub/');
+                            }, 1000);
+                        } else {
+                            // Show error
+                            document.getElementById('spinner').style.display = 'none';
+                            document.getElementById('error-box').style.display = 'block';
+                            document.getElementById('error-box').textContent = data.error || 'Authentication failed';
+                            document.getElementById('status-text').textContent = 'Authentication failed';
+                            document.querySelector('.duo-instructions').style.display = 'none';
+                        }
+                    } else {
+                        // Still waiting - update status message if provided
+                        if (data.status_msg) {
+                            document.getElementById('status-text').textContent = data.status_msg;
+                        }
+                        // Continue polling
+                        setTimeout(checkStatus, pollInterval);
+                    }
+                })
+                .catch(function(error) {
+                    console.error('Polling error:', error);
+                    // Continue polling despite errors
+                    setTimeout(checkStatus, pollInterval);
+                });
+        }
+
+        // Start polling after initial delay
+        setTimeout(checkStatus, pollInterval);
+    </script>
+</body>
+</html>

@@ -738,6 +738,26 @@ class DuoAuthenticator(Authenticator):
         env_val = os.environ.get('DUO_DEFAULT_BYPASS', '').lower()
         return env_val in ('1', 'true', 'yes')
 
+    duo_user_list_path = Unicode(
+        help="""
+        Path to the CSV file containing user-to-Duo username mappings.
+
+        The CSV file should have the format:
+        username,duo_username,bypass
+
+        Where bypass is '1' to skip Duo for that user, or '0'/'No' otherwise.
+
+        Can also be set via the DUO_USER_LIST environment variable.
+        If not set, no user mapping will be loaded.
+
+        """
+    ).tag(config=True)
+
+    @default('duo_user_list_path')
+    def _default_duo_user_list_path(self):
+        """Get user list path from environment variable."""
+        return os.environ.get('DUO_USER_LIST', '')
+
     auth_api_ikey = Unicode(
         help="""
         Duo Integration Key for Auth API mode.
@@ -795,8 +815,8 @@ class DuoAuthenticator(Authenticator):
         self._auth_sessions = {}  # Maps state -> {duo_username, devices, user, timestamp} for Auth API mode
 
     def _load_user_mapping(self):
-        """Load user mapping from DUO_USER_LIST CSV file."""
-        user_list_path = os.environ.get('DUO_USER_LIST')
+        """Load user mapping from duo_user_list_path CSV file."""
+        user_list_path = self.duo_user_list_path
         if user_list_path:
             try:
                 with open(user_list_path, 'r') as f:

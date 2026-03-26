@@ -119,6 +119,23 @@ Or via environment variable:
 export DUO_DEFAULT_BYPASS=true
 ```
 
+### Cache Behavior
+
+The user mapping is cached with a TTL (time-to-live) to balance performance
+with update responsiveness:
+
+```python
+# Reload mapping every 60 seconds (default)
+c.DuoAuthenticator.duo_user_list_cache_ttl = '60'
+
+# Disable caching - reload on every login
+c.DuoAuthenticator.duo_user_list_cache_ttl = '0'
+```
+
+If the mapping file becomes inaccessible after initial load, the cached
+mapping is retained until the file becomes available again. This ensures
+logins continue working during temporary file system issues.
+
 ## Configuration Reference
 
 ### Required Options
@@ -139,6 +156,7 @@ export DUO_DEFAULT_BYPASS=true
 | `duo_mode` | `'universal'` | Authentication mode: `'universal'` or `'auth_api'` |
 | `duo_user_list_path` | `''` | Path to user mapping CSV file |
 | `duo_default_bypass` | `False` | Bypass Duo for users not in mapping file |
+| `duo_user_list_cache_ttl` | `'60'` | Cache TTL in seconds for user mapping (0 to disable) |
 | `auth_api_timeout` | `'300'` | Session timeout in seconds (Auth API mode) |
 | `primary_auth_class` | `PAMAuthenticator` | Primary authentication class |
 

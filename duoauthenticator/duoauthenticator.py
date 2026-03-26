@@ -758,6 +758,22 @@ class DuoAuthenticator(Authenticator):
         """Get user list path from environment variable."""
         return os.environ.get('DUO_USER_LIST', '')
 
+    duo_user_list_cache_ttl = Unicode(
+        '60',
+        help="""
+        Time-to-live in seconds for cached user mapping.
+
+        The user mapping file is reloaded after this many seconds have passed.
+        Set to 0 to disable caching (reload on every login).
+
+        Defaults to 60 seconds.
+
+        If the file becomes inaccessible, the cached mapping is retained
+        until the file becomes available again.
+
+        """
+    ).tag(config=True)
+
     auth_api_ikey = Unicode(
         help="""
         Duo Integration Key for Auth API mode.
@@ -806,6 +822,7 @@ class DuoAuthenticator(Authenticator):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._user_mapping = {}
+        self._user_mapping_timestamp = 0  # When mapping was last loaded
         self._load_user_mapping()
         self._current_auth_username = None
         self._current_duo_username = None
@@ -814,25 +831,49 @@ class DuoAuthenticator(Authenticator):
         self._state_mapping = {}  # Maps state to username for callback validation
         self._auth_sessions = {}  # Maps state -> {duo_username, devices, user, timestamp} for Auth API mode
 
+    def _refresh_user_mapping_if_needed(self):
+        """Refresh user mapping if cache TTL has expired."""
+        ttl = int(self.duo_user_list_cache_ttl)
+        if ttl > 0 and time.time() - self._user_mapping_timestamp > ttl:
+            self._load_user_mapping()
+
     def _load_user_mapping(self):
         """Load user mapping from duo_user_list_path CSV file."""
         user_list_path = self.duo_user_list_path
-        if user_list_path:
-            try:
-                with open(user_list_path, 'r') as f:
-                    reader = csv.reader(f)
-                    for row in reader:
-                        if len(row) >= 3:
-                            username = row[0].strip('"').strip()
-                            duo_username = row[1].strip('"').strip()
-                            bypass = row[2].strip('"').strip()
-                            self._user_mapping[username] = {
-                                'duo_username': duo_username,
-                                'bypass': bypass == '1'
-                            }
-                    self.log.info("Loaded user mapping from %s", user_list_path)
-            except Exception as e:
-                self.log.warning("Failed to load user mapping from %s: %s",
+        if not user_list_path:
+            return
+
+        new_mapping = {}
+        try:
+            with open(user_list_path, 'r') as f:
+                reader = csv.reader(f)
+                for row in reader:
+                    if len(row) >= 3:
+                        username = row[0].strip('"').strip()
+                        duo_username = row[1].strip('"').strip()
+                        bypass = row[2].strip('"').strip()
+                        new_mapping[username] = {
+                            'duo_username': duo_username,
+                            'bypass': bypass == '1'
+                        }
+            # Successfully loaded - update cache
+            self._user_mapping = new_mapping
+            self._user_mapping_timestamp = time.time()
+            self.log.info("Loaded user mapping from %s (%d users)", user_list_path, len(new_mapping))
+        except FileNotFoundError:
+            if self._user_mapping:
+                # Keep stale cache
+                self.log.warning("User mapping file not found: %s. Using cached mapping (%d users).",
+                    user_list_path, len(self._user_mapping))
+            else:
+                self.log.warning("User mapping file not found: %s. No mapping loaded.", user_list_path)
+        except Exception as e:
+            if self._user_mapping:
+                # Keep stale cache
+                self.log.warning("Failed to load user mapping from %s: %s. Using cached mapping (%d users).",
+                    user_list_path, str(e), len(self._user_mapping))
+            else:
+                self.log.warning("Failed to load user mapping from %s: %s. No mapping loaded.",
                     user_list_path, str(e))
 
     def _get_duo_info(self, username):
@@ -841,6 +882,9 @@ class DuoAuthenticator(Authenticator):
         Returns a dict with 'duo_username' and 'bypass' keys.
         If username not found, returns the original username and the default bypass value.
         """
+        # Refresh mapping if cache TTL has expired
+        self._refresh_user_mapping_if_needed()
+
         if username in self._user_mapping:
             return self._user_mapping[username]
         return {'duo_username': username, 'bypass': self.duo_default_bypass}

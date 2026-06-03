@@ -856,10 +856,16 @@ class DuoAuthenticator(Authenticator):
                             'duo_username': duo_username,
                             'bypass': bypass == '1'
                         }
-            # Successfully loaded - update cache
-            self._user_mapping = new_mapping
-            self._user_mapping_timestamp = time.time()
-            self.log.info("Loaded user mapping from %s (%d users)", user_list_path, len(new_mapping))
+            # Successfully loaded - only update cache if non-empty or no existing cache
+            if new_mapping or not self._user_mapping:
+                self._user_mapping = new_mapping
+                self._user_mapping_timestamp = time.time()
+                self.log.info("Loaded user mapping from %s (%d users)", user_list_path, len(new_mapping))
+            else:
+                self.log.warning(
+                    "User mapping from %s was empty. Keeping cached mapping (%d users).",
+                    user_list_path, len(self._user_mapping)
+                )
         except FileNotFoundError:
             if self._user_mapping:
                 # Keep stale cache

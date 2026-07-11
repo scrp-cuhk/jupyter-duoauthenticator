@@ -27,65 +27,81 @@ class DuoHandler(LoginHandler):
         # Do primary auth
         duo_username = await self.authenticator.do_primary_auth(self, data)
 
-        if duo_username:
-            # Check if user should bypass Duo
-            if self.authenticator._current_bypass:
-                # Bypass Duo, authenticate user with primary auth only
-                self.log.info("Bypassing Duo for user '%s'", self.authenticator._current_auth_username)
-                # Get the authenticated result from primary auth
-                authenticated = self.authenticator._current_user
-                if authenticated:
-                    # Convert to User object and set login cookie
-                    user = await self.auth_to_user(authenticated)
-                    self.set_login_cookie(user)
-                    self.redirect(self.get_next_url(user))
-                else:
-                    html = await self._render(
-                        login_error='Authentication failed',
-                        username='',
-                    )
-                    self.finish(html)
-            else:
-                # Perform Duo 2FA using Universal redirect flow
-                try:
-                    # Create Duo client
-                    duo_client = duo_universal.Client(
-                        self.authenticator.client_id,
-                        self.authenticator.client_secret,
-                        self.authenticator.apihost,
-                        self.authenticator.redirect_uri
-                    )
-
-                    # Perform health check
-                    duo_client.health_check()
-
-                    # Generate state
-                    state = duo_client.generate_state()
-
-                    # Store state mapped to username for callback validation
-                    self.authenticator._state_mapping[state] = duo_username
-
-                    # Create auth URL and redirect to Duo
-                    prompt_uri = duo_client.create_auth_url(duo_username, state)
-
-                    self.log.debug("Redirecting user '%s' to Duo for authentication",
-                        self.authenticator._current_auth_username)
-                    self.redirect(prompt_uri)
-
-                except duo_universal.DuoException as e:
-                    self.log.error("Duo setup failed: %s", str(e))
-                    html = await self._render(
-                        login_error='Duo authentication unavailable',
-                        username='',
-                    )
-                    self.finish(html)
-        else:
+        # None means primary auth failed; an empty duo_username is still valid
+        # when the user is configured to bypass Duo (bypass=1 with no mapping).
+        if duo_username is None:
             # self._render is defined by LoginHandler
             html = await self._render(
                 login_error='Invalid username or password',
                 username='',
             )
             self.finish(html)
+            return
+
+        # Check if user should bypass Duo
+        if self.authenticator._current_bypass:
+            # Bypass Duo, authenticate user with primary auth only
+            self.log.info("Bypassing Duo for user '%s'", self.authenticator._current_auth_username)
+            # Get the authenticated result from primary auth
+            authenticated = self.authenticator._current_user
+            if authenticated:
+                # Convert to User object and set login cookie
+                user = await self.auth_to_user(authenticated)
+                self.set_login_cookie(user)
+                self.redirect(self.get_next_url(user))
+            else:
+                html = await self._render(
+                    login_error='Authentication failed',
+                    username='',
+                )
+                self.finish(html)
+        else:
+            # Perform Duo 2FA using Universal redirect flow
+            if not duo_username:
+                # No Duo username configured for this non-bypass user
+                self.log.error(
+                    "No duo_username configured for user '%s' (bypass not set)",
+                    self.authenticator._current_auth_username)
+                html = await self._render(
+                    login_error='Duo authentication not configured for this user. '
+                                'Contact your administrator.',
+                    username='',
+                )
+                self.finish(html)
+                return
+
+            try:
+                # Create Duo client
+                duo_client = duo_universal.Client(
+                    self.authenticator.client_id,
+                    self.authenticator.client_secret,
+                    self.authenticator.apihost,
+                    self.authenticator.redirect_uri
+                )
+
+                # Perform health check
+                duo_client.health_check()
+
+                # Generate state
+                state = duo_client.generate_state()
+
+                # Store state mapped to username for callback validation
+                self.authenticator._state_mapping[state] = duo_username
+
+                # Create auth URL and redirect to Duo
+                prompt_uri = duo_client.create_auth_url(duo_username, state)
+
+                self.log.debug("Redirecting user '%s' to Duo for authentication",
+                    self.authenticator._current_auth_username)
+                self.redirect(prompt_uri)
+
+            except duo_universal.DuoException as e:
+                self.log.error("Duo setup failed: %s", str(e))
+                html = await self._render(
+                    login_error='Duo authentication unavailable',
+                    username='',
+                )
+                self.finish(html)
 
 class DuoCallbackHandler(BaseHandler):
     """Duo Universal Callback Handler"""
@@ -262,7 +278,9 @@ class DuoAuthAPIHandler(LoginHandler):
         # Do primary auth
         duo_username = await self.authenticator.do_primary_auth(self, data)
 
-        if not duo_username:
+        # None means primary auth failed; an empty duo_username is still valid
+        # when the user is configured to bypass Duo (bypass=1 with no mapping).
+        if duo_username is None:
             html = await self._render(
                 login_error='Invalid username or password',
                 username='',
@@ -284,6 +302,19 @@ class DuoAuthAPIHandler(LoginHandler):
                     username='',
                 )
                 self.finish(html)
+            return
+
+        # No Duo username configured for this non-bypass user
+        if not duo_username:
+            self.log.error(
+                "No duo_username configured for user '%s' (bypass not set)",
+                self.authenticator._current_auth_username)
+            html = await self._render(
+                login_error='Duo authentication not configured for this user. '
+                            'Contact your administrator.',
+                username='',
+            )
+            self.finish(html)
             return
 
         # Call Duo preauth API to get devices
@@ -953,7 +984,12 @@ class DuoAuthenticator(Authenticator):
     async def do_primary_auth(self, handler, data):
         """Do primary authentication, and return the duo_username if successful.
 
-        Return None otherwise.
+        Return None if primary authentication fails.
+
+        Note: the returned duo_username may be an empty string when the user
+        is configured to bypass Duo (bypass=1) but has no duo_username in the
+        mapping. Callers must therefore check _current_bypass rather than the
+        truthiness of the return value to decide whether primary auth succeeded.
         """
         user = await self.primary_authenticator.get_authenticated_user(handler, data)
         if user:

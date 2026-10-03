@@ -10,6 +10,8 @@ import secrets
 import time
 import json
 import sys
+import glob
+from datetime import datetime
 from urllib.parse import urlparse, urlunparse
 
 class DuoHandler(LoginHandler):
@@ -30,9 +32,13 @@ class DuoHandler(LoginHandler):
         # None means primary auth failed; an empty duo_username is still valid
         # when the user is configured to bypass Duo (bypass=1 with no mapping).
         if duo_username is None:
+            if self.authenticator._current_expired:
+                login_error = 'This account has expired. Please contact your administrator.'
+            else:
+                login_error = 'Invalid username or password'
             # self._render is defined by LoginHandler
             html = await self._render(
-                login_error='Invalid username or password',
+                login_error=login_error,
                 username='',
             )
             self.finish(html)
@@ -281,8 +287,12 @@ class DuoAuthAPIHandler(LoginHandler):
         # None means primary auth failed; an empty duo_username is still valid
         # when the user is configured to bypass Duo (bypass=1 with no mapping).
         if duo_username is None:
+            if self.authenticator._current_expired:
+                login_error = 'This account has expired. Please contact your administrator.'
+            else:
+                login_error = 'Invalid username or password'
             html = await self._render(
-                login_error='Invalid username or password',
+                login_error=login_error,
                 username='',
             )
             self.finish(html)
@@ -774,9 +784,15 @@ class DuoAuthenticator(Authenticator):
         Path to the CSV file containing user-to-Duo username mappings.
 
         The CSV file should have the format:
-        username,duo_username,bypass
+        username,duo_username,bypass[,expiry]
 
         Where bypass is '1' to skip Duo for that user, or '0'/'No' otherwise.
+        The optional expiry field is a date ('2026-12-31', valid through the
+        end of that day) or date and time ('2026-12-31 17:00'), after which
+        the account can no longer log in or start its server.
+
+        Lines whose first field starts with '#' are treated as comments
+        and skipped.
 
         Can also be set via the DUO_USER_LIST environment variable.
         If not set, no user mapping will be loaded.
@@ -788,6 +804,31 @@ class DuoAuthenticator(Authenticator):
     def _default_duo_user_list_path(self):
         """Get user list path from environment variable."""
         return os.environ.get('DUO_USER_LIST', '')
+
+    duo_user_list_dir = Unicode(
+        help="""
+        Path to a directory of user list files.
+
+        All *.txt files in this directory are loaded (in sorted order) and
+        merged into one user mapping, using the same format as
+        duo_user_list_path. This allows splitting users across multiple
+        files for easier management. If the same username appears in
+        several files, the entry from the file that sorts last wins.
+
+        If duo_user_list_path is also set, it is loaded last and its
+        entries take precedence over the directory files.
+
+        Can also be set via the DUO_USER_LIST_DIR environment variable.
+        If neither this nor duo_user_list_path is set, no user mapping
+        will be loaded.
+
+        """
+    ).tag(config=True)
+
+    @default('duo_user_list_dir')
+    def _default_duo_user_list_dir(self):
+        """Get user list directory from environment variable."""
+        return os.environ.get('DUO_USER_LIST_DIR', '')
 
     duo_user_list_cache_ttl = Unicode(
         '60',
@@ -858,6 +899,7 @@ class DuoAuthenticator(Authenticator):
         self._current_auth_username = None
         self._current_duo_username = None
         self._current_bypass = False
+        self._current_expired = False
         self._current_user = None
         self._state_mapping = {}  # Maps state to username for callback validation
         self._auth_sessions = {}  # Maps state -> {duo_username, devices, user, timestamp} for Auth API mode
@@ -868,50 +910,110 @@ class DuoAuthenticator(Authenticator):
         if ttl > 0 and time.time() - self._user_mapping_timestamp > ttl:
             self._load_user_mapping()
 
+    def _parse_user_list_row(self, row, source):
+        """Parse one CSV row from a user list file.
+
+        Returns (username, info) for a valid row, or None for rows to
+        skip (comments, blank lines, rows with too few fields).
+
+        An unparseable expiry date fails closed: the user is stored as
+        already expired so a typo cannot grant indefinite access.
+        """
+        if len(row) < 3:
+            return None
+
+        username = row[0].strip('"').strip()
+        # Comments: skip rows whose first field starts with '#'
+        if not username or username.startswith('#'):
+            return None
+        duo_username = row[1].strip('"').strip()
+        bypass = row[2].strip('"').strip()
+        info = {
+            'duo_username': duo_username,
+            'bypass': bypass == '1',
+            'expires_at': None,
+        }
+        if len(row) >= 4:
+            expiry = row[3].strip('"').strip()
+            expires_at = self._parse_expiry(expiry)
+            if expiry and expires_at is None:
+                self.log.warning(
+                    "Unparseable expiry date '%s' for user '%s' in %s. "
+                    "Treating account as expired.",
+                    expiry, username, source)
+                expires_at = 0
+            info['expires_at'] = expires_at
+        return username, info
+
+    @staticmethod
+    def _parse_expiry(expiry):
+        """Parse an expiry field into an epoch timestamp.
+
+        Accepted formats: 'YYYY-MM-DD HH:MM:SS', 'YYYY-MM-DD HH:MM',
+        and 'YYYY-MM-DD' (valid through the end of that day, 23:59:59).
+
+        Returns None if the value is empty or unparseable.
+        """
+        if not expiry:
+            return None
+        for fmt, date_only in (
+            ('%Y-%m-%d %H:%M:%S', False),
+            ('%Y-%m-%d %H:%M', False),
+            ('%Y-%m-%d', True),
+        ):
+            try:
+                parsed = datetime.strptime(expiry, fmt)
+                if date_only:
+                    parsed = parsed.replace(hour=23, minute=59, second=59)
+                return parsed.timestamp()
+            except ValueError:
+                continue
+        return None
+
     def _load_user_mapping(self):
-        """Load user mapping from duo_user_list_path CSV file."""
-        user_list_path = self.duo_user_list_path
-        if not user_list_path:
+        """Load user mapping from duo_user_list_dir/*.txt and/or duo_user_list_path."""
+        # Files to load: directory files in sorted order first, then the
+        # explicit path so it takes precedence on username conflicts.
+        sources = []
+        if self.duo_user_list_dir:
+            sources.extend(sorted(glob.glob(os.path.join(self.duo_user_list_dir, '*.txt'))))
+        if self.duo_user_list_path:
+            sources.append(self.duo_user_list_path)
+        if not sources:
             return
 
         new_mapping = {}
-        try:
-            with open(user_list_path, 'r') as f:
-                reader = csv.reader(f)
-                for row in reader:
-                    if len(row) >= 3:
-                        username = row[0].strip('"').strip()
-                        duo_username = row[1].strip('"').strip()
-                        bypass = row[2].strip('"').strip()
-                        new_mapping[username] = {
-                            'duo_username': duo_username,
-                            'bypass': bypass == '1'
-                        }
-            # Successfully loaded - only update cache if non-empty or no existing cache
-            if new_mapping or not self._user_mapping:
-                self._user_mapping = new_mapping
-                self._user_mapping_timestamp = time.time()
-                self.log.info("Loaded user mapping from %s (%d users)", user_list_path, len(new_mapping))
-            else:
-                self.log.warning(
-                    "User mapping from %s was empty. Keeping cached mapping (%d users).",
-                    user_list_path, len(self._user_mapping)
-                )
-        except FileNotFoundError:
-            if self._user_mapping:
-                # Keep stale cache
-                self.log.warning("User mapping file not found: %s. Using cached mapping (%d users).",
-                    user_list_path, len(self._user_mapping))
-            else:
-                self.log.warning("User mapping file not found: %s. No mapping loaded.", user_list_path)
-        except Exception as e:
-            if self._user_mapping:
-                # Keep stale cache
-                self.log.warning("Failed to load user mapping from %s: %s. Using cached mapping (%d users).",
-                    user_list_path, str(e), len(self._user_mapping))
-            else:
-                self.log.warning("Failed to load user mapping from %s: %s. No mapping loaded.",
-                    user_list_path, str(e))
+        failed_sources = []
+        for source in sources:
+            try:
+                with open(source, 'r') as f:
+                    reader = csv.reader(f)
+                    count = 0
+                    for row in reader:
+                        parsed = self._parse_user_list_row(row, source)
+                        if parsed:
+                            username, info = parsed
+                            new_mapping[username] = info
+                            count += 1
+                self.log.debug("Loaded %d users from %s", count, source)
+            except FileNotFoundError:
+                failed_sources.append(source)
+                self.log.warning("User mapping file not found: %s", source)
+            except Exception as e:
+                failed_sources.append(source)
+                self.log.warning("Failed to load user mapping from %s: %s", source, str(e))
+
+        # Successfully loaded - only update cache if non-empty or no existing cache
+        if new_mapping or not self._user_mapping:
+            self._user_mapping = new_mapping
+            self._user_mapping_timestamp = time.time()
+            self.log.info("Loaded user mapping from %s (%d users)",
+                ', '.join(sources), len(new_mapping))
+        else:
+            self.log.warning(
+                "User mapping from %s was empty. Keeping cached mapping (%d users).",
+                ', '.join(failed_sources) or 'all sources', len(self._user_mapping)
+            )
 
     def _get_duo_info(self, username):
         """Get Duo username and bypass flag for a given username.
@@ -924,7 +1026,20 @@ class DuoAuthenticator(Authenticator):
 
         if username in self._user_mapping:
             return self._user_mapping[username]
-        return {'duo_username': username, 'bypass': self.duo_default_bypass}
+        return {'duo_username': username, 'bypass': self.duo_default_bypass,
+                'expires_at': None}
+
+    def _is_expired(self, username):
+        """Check whether an account's expiry has passed.
+
+        Users not in the mapping (or without an expiry field) never expire.
+        """
+        self._refresh_user_mapping_if_needed()
+        info = self._user_mapping.get(username)
+        if not info:
+            return False
+        expires_at = info.get('expires_at')
+        return expires_at is not None and time.time() >= expires_at
 
     duo_custom_html = Unicode(
         help="""
@@ -990,10 +1105,21 @@ class DuoAuthenticator(Authenticator):
         is configured to bypass Duo (bypass=1) but has no duo_username in the
         mapping. Callers must therefore check _current_bypass rather than the
         truthiness of the return value to decide whether primary auth succeeded.
+
+        If the account's expiry has passed, this returns None regardless of
+        primary auth success and sets _current_expired so callers can show
+        an appropriate message.
         """
+        self._current_expired = False
         user = await self.primary_authenticator.get_authenticated_user(handler, data)
         if user:
             username = user['name']
+            # Block expired accounts from logging in
+            if self._is_expired(username):
+                self.log.warning(
+                    "Login denied for expired account '%s'", username)
+                self._current_expired = True
+                return None
             # Get Duo info for this user
             duo_info = self._get_duo_info(username)
             self._current_auth_username = username
@@ -1003,3 +1129,10 @@ class DuoAuthenticator(Authenticator):
             return self._current_duo_username
         else:
             return None
+
+    async def pre_spawn_start(self, user, spawner):
+        """Block server starts for expired accounts."""
+        if self._is_expired(user.name):
+            self.log.warning(
+                "Spawn denied for expired account '%s'", user.name)
+            raise web.HTTPError(403, "Account expired")
